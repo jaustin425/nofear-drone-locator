@@ -1,0 +1,7 @@
+# Validated local environment; full resolved versions in requirements.lock.txt.
+dronecot[wifi]==2.3.10
+pytak==7.6.1
+scapy==2.8.0
+fastapi==0.142.2
+uvicorn==0.54.0
+httpx==0.28.1

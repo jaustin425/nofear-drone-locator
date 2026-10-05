@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AetherLink Scout • Local drone awareness</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/location.css">
+  <link rel="stylesheet" href="/static/live.css">
+  <script defer src="/static/vendor/leaflet.js"></script>
+  <script type="module" src="/static/app.mjs"></script>
+</head>
+<body>
+  <div class="replay-banner"><span class="badge" id="mode-badge">HISTORICAL REPLAY</span><span id="mode-description">Recorded observations · no live receiver · TAK output disabled</span></div>
+  <header><div class="brand"><span class="brand-mark">A</span><div><h1>AetherLink <span>Scout</span></h1><p>LOCAL AIRSPACE AWARENESS</p></div></div><div class="header-right"><span class="status-dot"></span><span id="mode-title">Local replay</span> <span class="divider">/</span><span id="source">Loading capture…</span></div></header>
+  <main>
+    <aside class="left-panel">
+      <div class="panel-heading"><h2>Observed aircraft</h2><span id="track-count" class="count">0</span></div>
+      <p class="muted small">Reported Remote ID · identities unverified</p>
+      <section id="receiver-panel" hidden aria-label="Detection controls and receiver status">
+        <div class="detection-buttons"><button id="start-detection" class="primary">START</button><button id="stop-detection" disabled>STOP</button></div>
+        <p id="receiver-status" role="status">Loading receiver status…</p>
+        <p id="receiver-counts" class="small muted"></p>
+        <p id="radio-status" class="small muted"></p>
+        <p id="audio-status" class="small muted">Audio not armed</p>
+        <p id="control-error" class="small error" role="status"></p>
+        <button id="clear-map" disabled>Clear old tracks</button>
+        <p id="clear-map-status" class="small muted" role="status">Removes tracks without a report for 30 seconds. Active tracks, my location and saved history remain; detection continues.</p>
+      </section>
+      <section class="history-panel" aria-label="Saved detection history">
+        <div class="panel-heading"><h2>History</h2><button id="refresh-history">Refresh</button></div>
+        <p id="history-status" class="small muted" role="status">Loading saved reports…</p>
+        <div id="history-list"></div>
+        <div class="location-buttons"><button id="history-newer" disabled>Newer</button><button id="history-older" disabled>Older</button><button id="return-live" hidden>Return to live view</button></div>
+        <p class="small muted">Saved snapshots are historical reported data. Live history stays on this laptop; simulation history is temporary. The latest 1,000 track/session snapshots are retained.</p>
+      </section>
+      <div id="loading" role="status">Loading recorded reports…</div>
+      <div id="tracks" aria-label="Aircraft list"></div>
+      <section class="my-location-panel" aria-label="My current location">
+        <h2>My location <span class="badge subtle" id="my-location-kind">NOT SET</span></h2>
+        <p id="my-location-status" class="small muted" role="status">Not set · separate from replay</p>
+        <div class="location-buttons"><button id="locate">Use browser location</button><button id="clear-location">Clear</button></div>
+        <details><summary>Enter coordinates manually</summary><form id="manual-location">
+          <label>Latitude<input id="my-latitude" type="number" min="-90" max="90" step="any" required></label>
+          <label>Longitude<input id="my-longitude" type="number" min="-180" max="180" step="any" required></label>
+          <button type="submit">Set my location</button>
+        </form></details>
+        <p class="small muted">Manual locations are remembered in this browser. Fixed testing points are not GPS fixes. Browser estimates may use a location provider and are not saved. Clear removes your saved point. My location is not sent to TAK.</p>
+      </section>
+      <div class="sidebar-footer"><span class="status-dot"></span><div><strong>Replay source only</strong><p>Wi-Fi interfaces remain unchanged.</p></div></div>
+    </aside>
+    <section class="map-panel" aria-label="Aircraft and reported operator map">
+      <div id="map"></div>
+      <div class="map-toolbar"><button id="fit">Fit tracks</button><button id="center-me">Center on me</button><button id="tiles" aria-pressed="false">Enable street map</button><span id="map-status">Offline coordinate map</span></div>
+      <div class="map-legend"><span><i class="legend-aircraft"></i>Aircraft</span><span><i class="legend-operator"></i>Reported operator</span><span><i class="legend-me"></i>My location</span><span class="muted">Faded = stale position</span></div>
+      <div id="alert-toast" role="status" aria-live="polite" hidden><strong>Replay detection</strong><span id="alert-text"></span><button id="acknowledge">Acknowledge</button></div>
+    </section>
+    <aside class="right-panel">
+      <div class="panel-heading"><h2>Operator &amp; report details</h2><span class="badge subtle">REPLAY</span></div>
+      <div id="details"><p class="empty">Select an aircraft to inspect its reported position and reception details.</p></div>
+      <section class="operator-actions"><h2>Reported location actions</h2><p class="small muted">Replay destinations are historical. An address is a nearby mapped place, not a verified controller/person location.</p>
+        <p id="operator-address" class="small" role="status">Select a reported operator position.</p>
+        <p id="address-attribution" class="small muted"></p>
+        <div class="location-buttons"><button id="lookup-address" disabled>Look up nearby address</button><button id="directions" disabled>Driving directions ↗</button></div>
+        <p id="address-provider-status" class="small muted">Address lookup is disabled until a local or approved provider is configured.</p>
+        <p class="small muted">Directions opens Google Maps and shares the destination and your fixed manual point or fresh browser estimate.</p>
+      </section>
+      <div id="aircraft-details"></div>
+      <section class="alerts-panel"><div class="panel-heading"><h2>Detection log</h2><button id="sound" aria-pressed="false">Sound off</button></div><p class="muted small">One alert per track per playback. Seeking is silent.</p><div id="alerts"><p class="muted small">No replay detections yet.</p></div></section>
+    </aside>
+  </main>
+  <footer class="playback">
+    <div class="transport"><button id="restart" aria-label="Restart replay">↺</button><button id="play" class="primary">Play replay</button><select id="speed" aria-label="Replay speed"><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></div>
+    <div class="timeline"><div class="timeline-label"><span id="phase">Ready · historical capture</span><span id="elapsed">00:00 / 00:00</span></div><input id="seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Replay timeline"></div>
+    <div class="clock"><span>CAPTURE CLOCK · UTC</span><strong id="clock">—</strong></div>
+  </footer>
+  <div class="footnote">Remote ID is reported data, not proof of a violation. Operator location may be fixed, takeoff-based, or dynamic. Altitude reference and accuracy require review.</div>
+</body>
+</html>

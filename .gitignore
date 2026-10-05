@@ -1,0 +1,47 @@
+# Local Python environment and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets and local configuration
+.env
+.env.*
+*.env
+*.env.*
+secrets/
+.aws/
+credentials*
+*token*
+config/local*.ini
+config.ini
+aetherlink_scout/static/local-location.json
+
+# Certificates, private keys and certificate packages
+certs/
+certificates/
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.zip
+
+# Captures, logs and local test data
+*.pcap
+*.pcapng
+*.cap
+*.pcap.*
+*.pcapng.*
+*.log
+logs/
+captures/
+local-data/
+test-data/
+data/
+tmp/
