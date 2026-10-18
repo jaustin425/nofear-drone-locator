@@ -1,3 +1,6 @@
 -r requirements.txt
 httpx==0.28.1
 playwright==1.63.0
+# Local TAK Aware QR images; optional credentials are entered privately.
+qrcode==8.2
+pypng==0.20220715.0

@@ -11,6 +11,7 @@
 - Consult current official DroneCOT and PyTAK documentation before choosing installation steps, configuration keys, or transport URLs. Link sources and distinguish supported capability from tested behavior.
 - Never print, read aloud, commit, or upload Cloudflare tokens, passwords, private keys, or certificate packages. Avoid opening credential files; use sanitized placeholders.
 - Use a dedicated sensor certificate; never an admin or personal iPhone certificate. Keep TLS server and hostname verification enabled.
+- TAK Aware onboarding codes default to server/username only. When the user explicitly requests password-bearing codes, provide private local terminal entry; never request real passwords in chat, tool arguments or logs. Keep all generated codes ignored/private and password-bearing pages separate per user. QR credentials are recoverable; do not upload or display real credential-bearing codes through agent tools.
 - Do not change production TAK Server, its firewall, the home router, or port forwarding.
 - Before disconnecting Wi-Fi or switching/adding monitor interfaces or changing channels, explain connectivity impact and obtain user approval.
 - Before sudo installation or system permission/capability changes, show exact commands and reasons and obtain approval. Favor a project-local virtual environment.
