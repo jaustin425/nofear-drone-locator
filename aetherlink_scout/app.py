@@ -34,11 +34,15 @@ def create_app(replay=None, host="127.0.0.2", geocoder_url=None, geoapify_key=No
     async def lifespan(app):
         if receiver:
             receiver.begin()
+            if receiver.tak_output:
+                receiver.tak_output.begin()
         try:
             yield
         finally:
             if receiver:
                 receiver.close()
+                if receiver.tak_output:
+                    receiver.tak_output.close()
 
     app = FastAPI(title="AetherLink Scout", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.event_clients = 0
@@ -69,7 +73,7 @@ def create_app(replay=None, host="127.0.0.2", geocoder_url=None, geoapify_key=No
     @app.get("/api/health")
     def health():
         status = receiver.status() if receiver else None
-        return {"mode": receiver.mode if receiver else replay["mode"], "tak_enabled": False,
+        return {"mode": receiver.mode if receiver else replay["mode"], "tak_enabled": bool(status and status["tak_enabled"]),
                 "live_capture": bool(receiver and receiver.mode == 'live_stream' and status['state'] == 'running'),
                 "receiver": status,
                 "address_lookup_enabled": bool(app.state.geocoder.endpoint),
@@ -106,8 +110,13 @@ def create_app(replay=None, host="127.0.0.2", geocoder_url=None, geoapify_key=No
                 while not await request.is_disconnected():
                     await asyncio.sleep(.25)
                     value = receiver.update(cursor)
-                    if value['status']['session_id'] != session or value['status']['map_revision'] != revision:
+                    changed_session = value['status']['session_id'] != session
+                    if changed_session or value['status']['map_revision'] != revision:
                         value = receiver.snapshot()
+                        if changed_session:
+                            # Distinguish a live START transition from the first
+                            # snapshot of a refreshed/reconnected browser stream.
+                            value['session_started'] = True
                     yield event(value)
                     cursor = value['sequence']
                     session = value['status']['session_id']

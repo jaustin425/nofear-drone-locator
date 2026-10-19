@@ -45,3 +45,6 @@ local-data/
 test-data/
 data/
 tmp/
+
+# Local sensor package password notes
+*-certificate-password.txt

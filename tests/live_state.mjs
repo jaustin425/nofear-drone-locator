@@ -31,3 +31,39 @@ assert.equal(state.apply({kind:'update',status:{...status(6,'new-session'),map_r
 assert.equal(state.tracks.size,1);
 assert.equal(state.alerts.length,1);
 console.log('PASS: alerts, duplicate updates, silent reconnect/refresh, stale aging, session restart, field freshness, renewal, clear/reappearance without repeat alert');
+
+// Late identity correlation removes provisional duplicates without another alert.
+const merged=new LiveState(metadata,()=>0);
+merged.apply({kind:'snapshot',metadata,status:status(),sequence:0,tracks:[]});
+assert.equal(merged.apply({kind:'update',status:status(),sequence:2,records:[{...report(1),key:'p'},{...report(2),key:'q'}]}),2);
+const survivor=structuredClone(merged.tracks.get('p'));
+survivor.fields.sources=['ble','wifi6'];
+assert.equal(merged.apply({kind:'update',status:{...status(),merge_aliases:{q:'p'}},sequence:4,records:[{key:'p',sequence:3,merge_from:['q'],merged_track:survivor},{...report(4),key:'p'}]}),0);
+assert.equal(merged.tracks.size,1);
+assert.equal(merged.alerts.length,1);
+assert.equal(merged.alerted.has('p'),true);
+assert.equal(merged.alerted.has('q'),false);
+console.log('PASS: provisional correlation merges markers/alerts without another detection');
+
+// A fresh report can land in the same-session START response snapshot before
+// the first incremental event. Explicit START alerts it once; refresh is silent.
+const quick=new LiveState(metadata,()=>0);
+quick.apply({kind:'snapshot',metadata,status:status(0,'before'),sequence:0,tracks:[]});
+quick.apply({kind:'snapshot',metadata,status:status(0,'after'),sequence:0,tracks:[]});
+const fastTrack={key:'fast',firstSeen:0,lastSeen:0,fields:{serial:'AetherLinkScoutFast'},fieldTimes:{},trail:[]};
+const fastFrame={kind:'snapshot',metadata,status:status(0,'after'),sequence:1,tracks:[fastTrack]};
+assert.equal(quick.apply(fastFrame,{notifySnapshot:true}),1);
+assert.equal(quick.apply(fastFrame,{notifySnapshot:true}),0);
+assert.equal(quick.apply(fastFrame),0);
+assert.equal(quick.alerts.length,1);
+console.log('PASS: immediate START snapshot alerts once, duplicate snapshots/refresh stay silent');
+
+const transition=new LiveState(metadata,()=>0);
+transition.apply({kind:'snapshot',metadata,status:status(0,'old'),sequence:0,tracks:[]});
+transition.apply({kind:'snapshot',metadata,status:status(0,'new'),sequence:0,tracks:[]});
+const transitionFrame={...fastFrame,status:status(0,'new'),session_started:true};
+assert.equal(transition.apply(transitionFrame),1);
+assert.equal(transition.apply(transitionFrame),0);
+const reconnect=new LiveState(metadata,()=>0);
+assert.equal(reconnect.apply({...transitionFrame,session_started:false}),0);
+console.log('PASS: server marks live START transition; initial/reconnected snapshots remain silent');

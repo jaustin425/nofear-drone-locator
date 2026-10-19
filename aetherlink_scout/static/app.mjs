@@ -15,6 +15,7 @@ const coordinate = p => p ? `${p.lat.toFixed(7)}, ${p.lon.toFixed(7)}` : 'Not re
 const numeric = (n, unit='') => n === undefined || n === null ? 'Not reported' : `${Number(n).toFixed(1)}${unit}`;
 let replay, map, selected, running=false, sound=false, audio, lastTick, fitted=false, fittedTrackCount=0;
 let streaming=false, simulation=false, eventSource=null, controlBusy=false, soundRequested=true;
+let pendingStartSession=null;
 const detectionTone=new DetectionTone();
 const layers = new Map();
 let tiles=null;
@@ -348,6 +349,11 @@ function renderDetails() {
   const fields=track.fields;
   let fragment=document.createDocumentFragment();
   fragment.append(node('h3',fields.serial || 'Unidentified transmitter','detail-name'));
+  if (Array.isArray(fields.sources)) {
+    const names={wifi6:'Panda · Wi-Fi 6',wifi149:'Techkey · Wi-Fi 149',ble:'Legacy Bluetooth'};
+    fragment.append(node('p',`Observed by: ${fields.sources.map(id=>names[id] || id).join(' / ')}`,'detail-description'));
+  }
+  if (fields.identity_conflict) fragment.append(node('p','Reported identity or position conflict · observations kept separate','error'));
   fragment.append(node('p',`${historySelection?'Saved historical observation · '+savedClock(historySelection.observed_at):observationLabel()} · source fields unverified`,'detail-description'));
   const trackClock=t=>historySelection?savedClock(historySelection.start_timestamp+t):captureClock(t);
   const section = (title, values) => {
@@ -387,7 +393,7 @@ function renderDetails() {
     ['RSSI',aged('rssi',numeric(fields.rssi,' dBm'))], ['Transmitter MAC',fields.mac || 'Not reported'],
     ['First observed',trackClock(track.firstSeen)],['Last observed',trackClock(track.lastSeen)],
     ['Track age',historySelection?'Saved snapshot; not a current detection':`${Math.floor(replay.age(track))}s ${streaming?'since received':'in replay'}`],
-    ...(streaming && fields.source_timestamp ? [['Source packet time', new Date(fields.source_timestamp*1000).toISOString()]] : []),['TAK output','Disabled']
+    ...(streaming && fields.source_timestamp ? [['Source packet time', new Date(fields.source_timestamp*1000).toISOString()]] : []),['TAK output',replay.status?.tak_output?.message || 'Disabled']
   ]);
   fragment.append(node('p','HAE is reported geodetic altitude, not height above ground. Accuracy codes are source enumerations, not metres. RSSI is signal strength, not distance.','muted small'));
   $('details').replaceChildren(operatorFragment);
@@ -420,19 +426,36 @@ function renderReceiver() {
   $('receiver-status').dataset.state=replay.connected?status.state:'error';
   const age=status.last_report_age===null?'No Remote ID reports yet':`${Math.floor(replay.age({lastSeen:replay.serverTime-status.last_report_age}))}s since last Remote ID report`;
   $('receiver-status').textContent=replay.connected?`${status.message} · ${age}`:'Dashboard connection lost · receiver state unknown; positions continue aging';
-  $('receiver-counts').textContent=`${status.counts.decoded} decoded · ${status.counts.errors} decode errors · ${status.counts.packets} ${simulation?'simulated inputs':'packets'}${status.continuous_capture?` · continuous · ${Math.max(0,status.capture_segments-1)} capture renewals`:''}${status.evicted_tracks?` · ${status.evicted_tracks} older tracks removed`:''}`;
+  const tak=status.tak_output;
+  $('tak-status').textContent=tak?`${tak.mode==='local'?'LOCAL CoT':'TAK TLS'}: ${tak.message} · ${tak.sent} writes · ${tak.errors} errors`:'TAK output disabled';
+  $('mode-description').textContent=simulation?'Recorded observations · no radio capture · TAK disabled':`${status.combined_enabled?'Wi-Fi 6 + Wi-Fi 149 + legacy BLE':'Explicit START/STOP capture'} · ${tak?(tak.mode==='local'?'LOCAL CoT only':'Optional TAK TLS enabled'):'TAK disabled'}`;
+  const inputs=simulation?`${status.counts.packets} simulated inputs`:status.combined_enabled?
+    `${status.counts.packets} Wi-Fi packets / BLE RID candidates`:status.ble_enabled?
+    `${status.ble_service_updates} BLE service updates · ${status.counts.packets} RID candidate advertisements`:
+    `${status.counts.packets} packets`;
+  $('receiver-counts').textContent=`${status.counts.decoded} decoded · ${status.counts.errors} decode errors · ${inputs}${status.continuous_capture?` · continuous · ${status.capture_renewals ?? Math.max(0,status.capture_segments-1)} capture renewals`:''}${status.evicted_tracks?` · ${status.evicted_tracks} older tracks removed`:''}`;
   const packetFrequency=status.last_frequency_mhz?`last packet ${status.last_frequency_mhz} MHz`:'packet frequency not verified yet';
   const radio=status.last_verified_radio;
-  $('radio-status').textContent=simulation?'Recorded input; no live radio':status.scan_enabled?
+  $('radio-status').textContent=simulation?'Recorded input; no live radio':status.combined_enabled?
+    'Combined detector · fixed Wi-Fi 6 + Wi-Fi 149 + legacy BLE':status.ble_enabled?
+    `${status.ble_adapter} · ${status.ble_coverage} · ${status.ble_service_updates} service-data updates`:
+    status.scan_enabled?
     `Scan 6 (3s) / 149 (1s) · ${radio?`last verified channel ${radio.channel}, ${Math.floor(radio.age_seconds)}s ago`:'radio not verified yet'} · ${packetFrequency}`:
     status.expected_channel?`Expected channel ${status.expected_channel} (${status.expected_frequency_mhz} MHz) · ${packetFrequency}`:'Packet frequency unavailable';
+  $('source-status').replaceChildren();
+  for (const source of status.sources || []) {
+    const input=source.ble_enabled?`${source.ble_service_updates} BLE service updates · ${source.counts.packets} RID candidates · legacy only`:
+      `channel ${source.expected_channel} · ${source.counts.packets} packets · ${source.last_frequency_mhz?`last packet ${source.last_frequency_mhz} MHz`:'packet frequency unverified'}`;
+    $('source-status').append(node('p',`${source.label}: ${source.state} · ${input} · ${source.counts.decoded} decoded · ${source.counts.errors} decode errors · ${Math.max(0,source.capture_segments-1)} renewals`));
+  }
   if (status.history_error) $('history-status').textContent='History could not be saved; live detection continues. Map clearing is blocked until saving works.';
   if (sound && audio?.state!=='running') $('audio-status').textContent='Browser audio suspended · click Sound on to re-arm';
 }
 
 function applyFrame(frame) {
+  selected=frame.status.merge_aliases?.[selected] || selected;
   const previous=replay.session;
-  const count=replay.apply(frame);
+  const count=replay.apply(frame,{notifySnapshot:pendingStartSession!==null && frame.status.session_id!==pendingStartSession});
   if (previous!==replay.session || ['stopped','error'].includes(replay.status?.state)) detectionTone.stop();
   if (previous!==replay.session) {selected=null; fitted=false;}
   if (count) beep();
@@ -445,11 +468,13 @@ function setupReceiver() {
   document.querySelector('#receiver-panel .detection-buttons').after($('sound'));
   $('mode-badge').textContent=simulation?'STREAM SIMULATION':'LIVE DETECTION';
   $('mode-description').textContent=simulation?'Recorded observations at timed arrival · no radio capture · TAK disabled':'Explicit START/STOP capture · TAK output disabled';
+  if (replay.status?.combined_enabled) $('mode-description').textContent='One START/STOP · Wi-Fi 6 + Wi-Fi 149 + legacy BLE · TAK disabled';
   $('mode-title').textContent=simulation?'Timed simulation':'Live receiver';
   document.querySelector('.right-panel .badge').textContent=simulation?'SIMULATION':'LIVE';
   document.querySelector('#alert-toast strong').textContent=simulation?'Simulation detection':'Drone report detected';
   document.querySelector('.alerts-panel > p').textContent='One alert per new transmitter track per detection session. Refresh/reconnect restores tracks silently.';
   document.querySelector('.sidebar-footer strong').textContent=simulation?'Recording simulation':'Dedicated capture radio';
+  if (replay.status?.combined_enabled) document.querySelector('.sidebar-footer strong').textContent='Three receiver inputs';
   document.querySelector('.sidebar-footer p').textContent=simulation?'Wi-Fi interfaces remain unchanged.':'Monitor setup and restoration stay in the launch terminal.';
   document.querySelector('.operator-actions > p').textContent=`${simulation?'Simulation destinations are historical. ':''}An address is a nearby mapped place, not a verified controller/person location.`;
   document.querySelector('.clock > span').textContent='RECEPTION SESSION · UTC';
@@ -461,6 +486,7 @@ function setupReceiver() {
     try {
       if (action==='stop') detectionTone.stop();
       if (action==='start' && soundRequested) await setSound(true);
+      if (action==='start') pendingStartSession=replay.session;
       const response=await fetch(`/api/detection/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
       if (!response.ok) {
         const failure=await response.json();
@@ -469,7 +495,7 @@ function setupReceiver() {
       applyFrame(await response.json());
     } catch (error) {
       $('control-error').textContent=error instanceof TypeError?'Dashboard connection unavailable; receiver state unknown.':error.message;
-    } finally {controlBusy=false; renderReceiver();}
+    } finally {pendingStartSession=null; controlBusy=false; renderReceiver();}
   }
   $('start-detection').addEventListener('click',()=>control('start'));
   $('stop-detection').addEventListener('click',()=>control('stop'));
@@ -496,7 +522,7 @@ function renderAlerts() {
 }
 
 function beep() {
-  if (!sound || !audio || audio.state !== 'running' || streaming && !['running','waiting'].includes(replay.status?.state)) return;
+  if (!sound || !audio || audio.state !== 'running' || streaming && !['running','waiting','renewing'].includes(replay.status?.state)) return;
   detectionTone.play(audio);
 }
 

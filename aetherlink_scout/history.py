@@ -71,3 +71,9 @@ class HistoryStore:
     def close(self):
         with self.lock:
             self.connection.close()
+
+    def remove_tracks(self, session_id, keys):
+        """Remove provisional duplicates only after the survivor was saved."""
+        with self.lock, self.connection:
+            for key in keys:
+                self.connection.execute('DELETE FROM reports WHERE session_id=? AND track_key=?', (session_id, key))

@@ -51,6 +51,7 @@ def report(data, timestamp):
         "timestamp": timestamp,
         "key": hashlib.sha256(identity.encode()).hexdigest()[:24],
         "serial": serial, "mac": mac,
+        "id_type": number(data.get("IDType"), 0, 15),
         "operator_id": text(data.get("OperatorID")),
         "aircraft": position(data), "operator": position(data, True),
         "speed": number(data.get("SpeedHorizontal"), 0, 254.25),

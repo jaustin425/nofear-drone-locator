@@ -18,6 +18,7 @@ from dronecot.wifi_parse import extract_odid_from_scapy_packet
 from .replay import report
 from .capture import CaptureError, LiveCapture, ScanCapture, SCAN_PLAN, EXPECTED_CHANNEL, EXPECTED_FREQUENCY, CAPTURE_SEGMENT_SECONDS
 from .history import HistoryStore
+from .decode_lock import DECODE_LOCK
 
 MAX_TRACKS = 512
 MAX_EVENTS = 2048
@@ -77,7 +78,7 @@ class PcapStream:
         if not 0 < length <= MAX_PACKET or wire_length < length or fraction >= self.scale:
             raise ValueError("Invalid packet length/time")
         payload = self.read(length)
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        with DECODE_LOCK, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             try:
                 packet = self.layer(payload)
             except Exception:
@@ -87,12 +88,14 @@ class PcapStream:
 
 
 class Receiver:
-    def __init__(self, *, simulation=None, speed=1, input_fd=None, live_interface=None, stale_seconds=30, clock=time.monotonic, capture_factory=LiveCapture, history=None, scan=False):
+    def __init__(self, *, simulation=None, speed=1, input_fd=None, live_interface=None, stale_seconds=30, clock=time.monotonic, capture_factory=LiveCapture, history=None, scan=False, channel=EXPECTED_CHANNEL, frequency=EXPECTED_FREQUENCY):
         if scan and (not live_interface or simulation is not None):
             raise ValueError('Scanning requires explicit live-interface mode.')
         self.mode = 'stream_simulation' if simulation is not None else 'live_stream'
         self.simulation, self.speed, self.input_fd = simulation, speed, input_fd
         self.scan = scan
+        self.expected_channel, self.expected_frequency = channel, frequency
+        self.worker_daemon = True
         self.live_interface = live_interface
         self.capture_factory = ScanCapture if scan and capture_factory is LiveCapture else capture_factory
         self.capture = None
@@ -103,7 +106,7 @@ class Receiver:
         self.session_id = uuid.uuid4().hex
         self.stale_seconds = stale_seconds
         self.lock = threading.RLock()
-        self.control = threading.Lock()
+        self.control = threading.RLock()
         self.capture_control = threading.Lock()
         self.stop = threading.Event()
         self.thread = None
@@ -121,6 +124,7 @@ class Receiver:
         self.history = history if history is not None else HistoryStore()
         self.history_saved = {}
         self.history_error = False
+        self.tak_output = None
         self.map_revision = 0
 
     def elapsed(self):
@@ -139,7 +143,8 @@ class Receiver:
                     'last_report_age': None if self.last_report is None else max(0, now-self.last_report),
                     'retained_tracks': len(self.tracks), 'evicted_tracks': self.evicted_tracks,
                     'detection_active': bool(self.stop_unconfirmed or self.thread and self.thread.is_alive()),
-                    'tak_enabled': False, 'capture_managed_by_app': self.live_interface is not None,
+                    'tak_enabled': bool(self.tak_output and not self.tak_output.local_output),
+                    'tak_output': self.tak_output.status() if self.tak_output else None, 'capture_managed_by_app': self.live_interface is not None,
                     'continuous_capture': bool(self.live_interface),
                     'capture_segment_seconds': CAPTURE_SEGMENT_SECONDS if self.live_interface else None,
                     'capture_segments': self.capture_segments,
@@ -148,8 +153,8 @@ class Receiver:
                     'scan_enabled': self.scan,
                     'channel_plan': [{'channel': c, 'frequency_mhz': f, 'dwell_seconds': d} for c, f, d in SCAN_PLAN] if self.scan else [],
                     'last_verified_radio': self._radio_status(),
-                    'expected_channel': EXPECTED_CHANNEL if self.live_interface and not self.scan else None,
-                    'expected_frequency_mhz': EXPECTED_FREQUENCY if self.live_interface and not self.scan else None,
+                    'expected_channel': self.expected_channel if self.live_interface and not self.scan else None,
+                    'expected_frequency_mhz': self.expected_frequency if self.live_interface and not self.scan else None,
                     'received_frequencies_mhz': sorted(self.frequencies),
                     'last_frequency_mhz': self.last_frequency}
 
@@ -164,7 +169,7 @@ class Receiver:
     def metadata(self):
         return {'mode': self.mode, 'source': 'Recorded input · timed simulation' if self.simulation is not None else 'Panda Wi-Fi receiver',
                 'start_timestamp': self.start_timestamp, 'stale_seconds': self.stale_seconds,
-                'duration': 0, 'tail_seconds': 0, 'records': [], 'tak_enabled': False}
+                'duration': 0, 'tail_seconds': 0, 'records': [], 'tak_enabled': bool(self.tak_output and not self.tak_output.local_output)}
 
     def publish(self, item):
         with self.lock:
@@ -293,7 +298,7 @@ class Receiver:
                 self.map_revision = 0
                 self.state = 'waiting'
                 self.message = 'Starting timed recording simulation' if self.simulation is not None else 'Starting capture · waiting for input'
-            self.thread = threading.Thread(target=self._run, name='scout-input', daemon=True)
+            self.thread = threading.Thread(target=self._run, name='scout-input', daemon=self.worker_daemon)
             self.thread.start()
             return self.status()
 
@@ -368,7 +373,7 @@ class Receiver:
             # Only timeout's confirmed duration expiry is renewable. Clean but
             # unexpected EOF, radio loss and failures require operator attention.
             if outcome != 124:
-                raise CaptureError('Capture ended unexpectedly; detection stopped. Check Panda and the private capture log before START.')
+                raise CaptureError('Capture ended unexpectedly; detection stopped. Check the receiver and private capture log before START.')
             self.set_state('renewing', 'Detection active · renewing capture')
             if self.stop.wait(.25):
                 raise InputStopped()
@@ -423,12 +428,12 @@ class Receiver:
                     self.last_frequency = frequency
                     if len(self.frequencies) < 64 or frequency in self.frequencies:
                         self.frequencies[frequency] = self.frequencies.get(frequency, 0)+1
-                allowed = {entry[1] for entry in SCAN_PLAN} if self.scan else {EXPECTED_FREQUENCY}
+                allowed = {entry[1] for entry in SCAN_PLAN} if self.scan else {self.expected_frequency}
                 if self.live_interface and frequency not in allowed:
-                    expected = 'scan channels 6/149 (2437/5745 MHz)' if self.scan else 'channel 6 (2437 MHz)'
-                    raise CaptureError(f'Capture stopped: received packets at {frequency} MHz, expected {expected}. Check Panda channel in the launch terminal.')
+                    expected = 'scan channels 6/149 (2437/5745 MHz)' if self.scan else f'channel {self.expected_channel} ({self.expected_frequency} MHz)'
+                    raise CaptureError(f'Capture stopped: received packets at {frequency} MHz, expected {expected}. Check the dedicated radio channel in the launch terminal.')
             try:
-                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                with DECODE_LOCK, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     extracted = extract_odid_from_scapy_packet(packet)
                     if not extracted:
                         continue

@@ -21,18 +21,20 @@ class CaptureError(Exception):
 
 
 class LiveCapture:
-    def __init__(self, interface):
+    def __init__(self, interface, *, channel=EXPECTED_CHANNEL, frequency=EXPECTED_FREQUENCY, driver=None):
         if not re.fullmatch(r'[a-zA-Z0-9_.-]{1,15}', interface) or interface == 'wlp3s0':
             raise CaptureError('Choose the dedicated capture radio; Intel uplink is protected.')
         self.interface = interface
+        self.expected_channel, self.expected_frequency = channel, frequency
+        self.expected_driver = driver
         self.process = self.log = None
 
     def verify_channel(self, info):
         channel = re.search(r'^\s*channel (\d+) \(([\d.]+) MHz\)', info, re.M)
         if not channel:
             raise CaptureError('Cannot verify Panda channel; capture was not started.')
-        if int(channel[1]) != EXPECTED_CHANNEL or float(channel[2]) != EXPECTED_FREQUENCY:
-            raise CaptureError(f'Panda is on channel {channel[1]} ({channel[2]} MHz); expected channel 6 (2437 MHz). Retune only Panda in the launch terminal before retrying.')
+        if int(channel[1]) != self.expected_channel or float(channel[2]) != self.expected_frequency:
+            raise CaptureError(f'Capture radio is on channel {channel[1]} ({channel[2]} MHz); expected channel {self.expected_channel} ({self.expected_frequency} MHz). Prepare the dedicated radio in the launch terminal before retrying.')
 
     def prepare_capture(self):
         pass
@@ -40,10 +42,12 @@ class LiveCapture:
     def start(self):
         if os.geteuid() == 0:
             raise CaptureError('Run the dashboard as your normal user.')
+        if self.expected_driver and Path(f'/sys/class/net/{self.interface}/device/driver').resolve().name != self.expected_driver:
+            raise CaptureError('Dedicated capture radio driver changed; prepare the inspected adapter before START.')
         try:
             info = subprocess.run(['iw', 'dev', self.interface, 'info'], capture_output=True, text=True, timeout=5, check=True)
             if not re.search(r'^\s*type monitor\s*$', info.stdout, re.M):
-                raise CaptureError('Panda must be prepared in monitor mode in your terminal first.')
+                raise CaptureError('Capture radio must be prepared in monitor mode in your terminal first.')
             self.verify_channel(info.stdout)
             routes = subprocess.run(['ip', 'route', 'show', 'default'], capture_output=True, text=True, timeout=5, check=True)
             if not re.search(r'\bdev wlp3s0\b', routes.stdout):
