@@ -421,7 +421,11 @@ function renderReceiver() {
   const age=status.last_report_age===null?'No Remote ID reports yet':`${Math.floor(replay.age({lastSeen:replay.serverTime-status.last_report_age}))}s since last Remote ID report`;
   $('receiver-status').textContent=replay.connected?`${status.message} · ${age}`:'Dashboard connection lost · receiver state unknown; positions continue aging';
   $('receiver-counts').textContent=`${status.counts.decoded} decoded · ${status.counts.errors} decode errors · ${status.counts.packets} ${simulation?'simulated inputs':'packets'}${status.continuous_capture?` · continuous · ${Math.max(0,status.capture_segments-1)} capture renewals`:''}${status.evicted_tracks?` · ${status.evicted_tracks} older tracks removed`:''}`;
-  $('radio-status').textContent=simulation?'Recorded input; no live radio':status.expected_channel?`Expected channel ${status.expected_channel} (${status.expected_frequency_mhz} MHz) · ${status.last_frequency_mhz?`packet frequency ${status.last_frequency_mhz} MHz`:'packet frequency not verified yet'}`:'Packet frequency unavailable';
+  const packetFrequency=status.last_frequency_mhz?`last packet ${status.last_frequency_mhz} MHz`:'packet frequency not verified yet';
+  const radio=status.last_verified_radio;
+  $('radio-status').textContent=simulation?'Recorded input; no live radio':status.scan_enabled?
+    `Scan 6 (3s) / 149 (1s) · ${radio?`last verified channel ${radio.channel}, ${Math.floor(radio.age_seconds)}s ago`:'radio not verified yet'} · ${packetFrequency}`:
+    status.expected_channel?`Expected channel ${status.expected_channel} (${status.expected_frequency_mhz} MHz) · ${packetFrequency}`:'Packet frequency unavailable';
   if (status.history_error) $('history-status').textContent='History could not be saved; live detection continues. Map clearing is blocked until saving works.';
   if (sound && audio?.state!=='running') $('audio-status').textContent='Browser audio suspended · click Sound on to re-arm';
 }

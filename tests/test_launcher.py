@@ -101,6 +101,15 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn('ip link set wlp3s0',trace)
         self.assertLess(trace.index('app-stop'),trace.rindex('set type managed'))
 
+    def test_scan_option_is_explicit_and_app_stops_before_restoration(self):
+        result=subprocess.run(['bash',str(self.root/'scripts/capture_panda.sh'),'--live-scan'],env=self.env,capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        trace=(self.root/'trace').read_text()
+        self.assertIn('--live-interface wlx9cefd5f67d4c --scan',trace)
+        self.assertLess(trace.index('app-stop'),trace.rindex('set type managed'))
+        # Merely launching prepares channel 6; scanning starts only on START.
+        self.assertNotIn('set channel 149',trace)
+
     def test_prepared_monitor_adoption_without_mode_cycle_or_retune(self):
         (self.root/'mode').write_text('monitor');(self.root/'channel').write_text('6')
         (self.root/'connected').unlink()

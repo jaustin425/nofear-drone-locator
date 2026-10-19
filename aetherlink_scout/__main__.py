@@ -18,7 +18,8 @@ def main():
     source.add_argument("--demo", action="store_true", help="Fictitious two-aircraft replay")
     source.add_argument('--simulate', metavar='PCAP', help='Timed historical input simulation; no radio capture')
     source.add_argument('--simulate-demo', action='store_true', help='Timed fictitious input simulation')
-    source.add_argument('--live-interface', metavar='INTERFACE', help='START/STOP capture on an already prepared monitor radio; never changes interface state')
+    source.add_argument('--live-interface', metavar='INTERFACE', help='START/STOP on an already prepared monitor radio; fixed channel by default, --scan explicitly enables Panda retuning')
+    parser.add_argument('--scan', action='store_true', help='Explicit live Panda scan: START retunes channels 6/149 with 3/1-second dwell; requires terminal authorization')
     parser.add_argument('--simulation-speed', type=float, default=1, help='Simulation pacing only: 1–20 (default 1)')
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--host", default="127.0.0.2", help="IPv4 loopback address only (default: 127.0.0.2)")
@@ -26,6 +27,8 @@ def main():
     geocoding.add_argument("--geocoder-url", help="Local/approved Nominatim-compatible reverse endpoint; disabled by default")
     geocoding.add_argument("--geoapify", action="store_true", help="Enable Geoapify; reads AETHERLINK_SCOUT_GEOAPIFY_KEY from server environment")
     args = parser.parse_args()
+    if args.scan and not args.live_interface:
+        parser.error('--scan requires --live-interface; replay/simulation never retunes')
     simulation_mode = args.simulate is not None or args.simulate_demo
     if not math.isfinite(args.simulation_speed) or not 1 <= args.simulation_speed <= 20:
         parser.error('simulation-speed must be between 1 and 20')
@@ -50,7 +53,7 @@ def main():
     replay = receiver = None
     if args.live_interface:
         history = HistoryStore(Path(__file__).resolve().parent.parent/'local-data/scout-history.sqlite3')
-        receiver = Receiver(live_interface=args.live_interface, history=history)
+        receiver = Receiver(live_interface=args.live_interface, history=history, scan=args.scan)
     else:
         try:
             replay = demo_dataset() if args.demo or args.simulate_demo else load_capture(args.simulate or args.capture)
@@ -62,6 +65,8 @@ def main():
     label = 'STREAM SIMULATION' if simulation_mode else 'LIVE INPUT STREAM' if receiver else 'HISTORICAL REPLAY'
     print(f'AetherLink Scout {label} — http://{host}:{args.port}', flush=True)
     print('TAK disabled. Prepare monitor radio separately; START listens until STOP using renewable bounded capture segments.' if args.live_interface else 'No radio capture or TAK output.', flush=True)
+    if args.scan:
+        print('SCAN SELECTED: START retunes only prepared Panda between channels 6 (3s) and 149 (1s). STOP cancels retuning; Intel remains the uplink.', flush=True)
     uvicorn.run(create_app(replay, str(host), args.geocoder_url, api_key, receiver=receiver), host=str(host), port=args.port, access_log=False, timeout_graceful_shutdown=2)
 
 

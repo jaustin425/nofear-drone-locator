@@ -4,8 +4,8 @@ set -euo pipefail
 umask 077
 
 capture_mode=${1:-bounded}
-if [[ $# -gt 1 || ( "$capture_mode" != bounded && "$capture_mode" != --live ) ]]; then
-    echo "Usage: bash scripts/capture_panda.sh [--live]" >&2
+if [[ $# -gt 1 || ( "$capture_mode" != bounded && "$capture_mode" != --live && "$capture_mode" != --live-scan ) ]]; then
+    echo "Usage: bash scripts/capture_panda.sh [--live | --live-scan]" >&2
     exit 1
 fi
 [[ $EUID != 0 ]] || { echo "Run this launcher as your normal user, not with sudo." >&2; exit 1; }
@@ -16,7 +16,7 @@ capture_frequency=2437
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$project_root"
 
-if [[ "$capture_mode" == --live ]]; then
+if [[ "$capture_mode" != bounded ]]; then
     [[ -x "$project_root/.venv/bin/python" ]] || {
         echo "Project Python environment is unavailable; nothing changed." >&2; exit 1;
     }
@@ -168,10 +168,15 @@ fi
 ip route show default | awk -v dev="$uplink_interface" '$0 ~ "dev " dev " " {found=1} END {exit !found}' || {
     echo "Intel default route is missing after preparation; restoring Panda." >&2; exit 1;
 }
-if [[ "$capture_mode" == --live ]]; then
+if [[ "$capture_mode" != bounded ]]; then
     echo "Open http://127.0.0.2:8765. START listens until STOP, renewing bounded 120s capture segments."
     echo "Ctrl+C exits Scout and restores Panda; STOP leaves Panda prepared for another START."
-    "$project_root/.venv/bin/python" -m aetherlink_scout --live-interface "$capture_interface" & app_pid=$!
+    scan_args=()
+    if [[ "$capture_mode" == --live-scan ]]; then
+        echo "SCAN SELECTED: START retunes Panda between channels 6 (3s) and 149 (1s); STOP cancels retuning. Intel stays connected."
+        scan_args=(--scan)
+    fi
+    "$project_root/.venv/bin/python" -m aetherlink_scout --live-interface "$capture_interface" "${scan_args[@]}" & app_pid=$!
     app_status=0
     wait "$app_pid" || app_status=$?
     app_pid=''

@@ -16,7 +16,7 @@ from scapy.layers.dot11 import Dot11, RadioTap
 from dronecot.rid_normalize import bytes_to_rid_dict
 from dronecot.wifi_parse import extract_odid_from_scapy_packet
 from .replay import report
-from .capture import CaptureError, LiveCapture, EXPECTED_CHANNEL, EXPECTED_FREQUENCY, CAPTURE_SEGMENT_SECONDS
+from .capture import CaptureError, LiveCapture, ScanCapture, SCAN_PLAN, EXPECTED_CHANNEL, EXPECTED_FREQUENCY, CAPTURE_SEGMENT_SECONDS
 from .history import HistoryStore
 
 MAX_TRACKS = 512
@@ -87,10 +87,14 @@ class PcapStream:
 
 
 class Receiver:
-    def __init__(self, *, simulation=None, speed=1, input_fd=None, live_interface=None, stale_seconds=30, clock=time.monotonic, capture_factory=LiveCapture, history=None):
+    def __init__(self, *, simulation=None, speed=1, input_fd=None, live_interface=None, stale_seconds=30, clock=time.monotonic, capture_factory=LiveCapture, history=None, scan=False):
+        if scan and (not live_interface or simulation is not None):
+            raise ValueError('Scanning requires explicit live-interface mode.')
         self.mode = 'stream_simulation' if simulation is not None else 'live_stream'
         self.simulation, self.speed, self.input_fd = simulation, speed, input_fd
-        self.live_interface, self.capture_factory = live_interface, capture_factory
+        self.scan = scan
+        self.live_interface = live_interface
+        self.capture_factory = ScanCapture if scan and capture_factory is LiveCapture else capture_factory
         self.capture = None
         self.stop_unconfirmed = False
         self.clock = clock
@@ -141,10 +145,20 @@ class Receiver:
                     'capture_segments': self.capture_segments,
                     'map_revision': self.map_revision,
                     'history_error': self.history_error,
-                    'expected_channel': EXPECTED_CHANNEL if self.live_interface else None,
-                    'expected_frequency_mhz': EXPECTED_FREQUENCY if self.live_interface else None,
+                    'scan_enabled': self.scan,
+                    'channel_plan': [{'channel': c, 'frequency_mhz': f, 'dwell_seconds': d} for c, f, d in SCAN_PLAN] if self.scan else [],
+                    'last_verified_radio': self._radio_status(),
+                    'expected_channel': EXPECTED_CHANNEL if self.live_interface and not self.scan else None,
+                    'expected_frequency_mhz': EXPECTED_FREQUENCY if self.live_interface and not self.scan else None,
                     'received_frequencies_mhz': sorted(self.frequencies),
                     'last_frequency_mhz': self.last_frequency}
+
+    def _radio_status(self):
+        verified = getattr(self.capture, 'verified', None)
+        if not verified:
+            return None
+        channel, frequency, checked = verified
+        return {'channel': channel, 'frequency_mhz': frequency, 'age_seconds': max(0, time.monotonic()-checked)}
 
 
     def metadata(self):
@@ -409,8 +423,10 @@ class Receiver:
                     self.last_frequency = frequency
                     if len(self.frequencies) < 64 or frequency in self.frequencies:
                         self.frequencies[frequency] = self.frequencies.get(frequency, 0)+1
-                if self.live_interface and frequency != EXPECTED_FREQUENCY:
-                    raise CaptureError(f'Capture stopped: received packets at {frequency} MHz, expected channel 6 (2437 MHz). Check Panda channel in the launch terminal.')
+                allowed = {entry[1] for entry in SCAN_PLAN} if self.scan else {EXPECTED_FREQUENCY}
+                if self.live_interface and frequency not in allowed:
+                    expected = 'scan channels 6/149 (2437/5745 MHz)' if self.scan else 'channel 6 (2437 MHz)'
+                    raise CaptureError(f'Capture stopped: received packets at {frequency} MHz, expected {expected}. Check Panda channel in the launch terminal.')
             try:
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     extracted = extract_odid_from_scapy_packet(packet)

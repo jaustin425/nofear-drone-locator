@@ -1,6 +1,45 @@
-# Proposed channel coverage
+# Channel coverage
 
-Status: planning only. Scout still captures on channel 6; no hopping is implemented or enabled by this document.
+Status: optional Panda scanning is implemented and checked offline; hardware scanning remains untested. Fixed channel 6 remains the default. No radio changes were made during development.
+
+## Optional scan mode — October 18, 2026
+
+After explicit approval for Panda preparation and retuning, use the terminal launcher with `--live-scan` instead of `--live`. It disconnects only Panda from its current Wi-Fi connection, prepares monitor mode on channel 6 and starts normal-user Scout. Intel remains the uplink. Opening the page does not scan. START selects channel 6 for three seconds, then channel 149 for one second, repeating until STOP. Dwell starts after each verified retune; command overhead and bounded capture renewal add reception gaps.
+
+```sh
+cd /home/jason/Projects/nofear-drone-locator
+sudo -v
+bash scripts/capture_panda.sh --live-scan
+```
+
+These commands change radio state: review the impact and obtain approval before running. The tested fixed-channel launch remains `bash scripts/capture_panda.sh --live`.
+
+Each START/120-second renewal checks the Panda interface/mt76x0u driver, discovers its current PHY, checks both channel capabilities, monitor mode, Intel default route and terminal sudo authorization. Restricted/disabled channels fail closed. A single bounded tcpdump stays open during retunes; neither decoder state nor session IDs, counts, history or alert deduplication resets between channels. The receiver accepts radiotap frequencies 2437/5745 MHz in scan mode and stops on other reported frequencies. Missing radiotap frequency remains unverified, not proof of channel coverage.
+
+Normal-user Python supervises a cancellable scan thread. Every retune uses this argument structure (only the known Panda interface and channels 6/149 are selected):
+
+```sh
+sudo -n timeout --signal=TERM --kill-after=1s 2s iw dev wlx9cefd5f67d4c set channel CHANNEL
+iw dev wlx9cefd5f67d4c info
+```
+
+No privileged Python, system capability changes, installations, regulatory changes or unattended password prompts are used. A reported-channel mismatch, radio loss, route loss or command/authorization failure stops scanning and capture with a visible error; it cannot trigger automatic renewal. STOP cancels pending retunes, waits for an in-flight command and scan-thread exit, then confirms capture exit. Ctrl+C stops Scout before the launcher restores Panda to managed mode/NetworkManager and reconnects a known original connection. STOP alone leaves the prepared radio in monitor mode on its last channel.
+
+The dashboard shows the selected scan/dwell plan, last verified radio channel with age and last observed packet frequency. A last verified channel is not a continuously measured current-channel claim, especially after STOP. Fixed mode still displays its expected channel separately.
+
+Offline checks cover scheduling, cancellation during dwell and retune, failed/stuck retunes, capture expiry, capability restrictions, mixed-frequency independent tracks, unexpected frequencies and explicit launcher selection. Live retune reliability, reception on 149, STOP/terminal restoration and two-drone behavior still need field confirmation.
+
+Checkpoint validation: all 55 Python unit tests passed, including seven scan tests, seven Techkey launcher tests and the explicit scan-launcher test. `node tests/live_state.mjs`, `node tests/location.mjs` and `node tests/replay_state.mjs` passed. `.venv/bin/python tests/browser_scan.py` verified the plan/last-verified display, explicit START and visible failure with a synthetic capture factory that refuses radio access; no external requests were made. JavaScript/shell syntax and `git diff --check` passed.
+
+### Newly attached Techkey
+
+Read-only inspection on October 18 found a Techkey AC1200 USB `0bda:b812` (RTL88x2bu), interface `wlx1cbfce038535`, driver `rtl88x2bu`, currently PHY 2 on kernel 6.8.0-142-generic. It advertises monitor mode and channels 6/2437 MHz and 149/5745 MHz without disabled/radar/no-IR flags. At that initial read-only inspection it was connected in managed mode; no interface changes or driver installations were made during inspection. The subsequent 60-second channel-6 capture completed and restored Techkey but contained zero packets (24-byte PCAP header only). The later unfiltered channel-44 diagnostic captured 7,537 frames, all reporting 5220 MHz, and confirmed restoration. Basic monitor reception on 44 is verified. A subsequent full-frame Mavic test decoded 189 Remote ID reports on channel 6, forming one track with zero decode errors; Techkey restoration was confirmed. Remote ID on 149 and simultaneous dual-radio operation remain unverified. The original filter matched 405 frames offline. See [test results](techkey-capture.md#channel-44-result--october-18-local-time). PHY indices can change.
+
+Panda was also present, connected in managed mode on channel 44, with Intel retaining the preferred default route. This supersedes an earlier observation before the USB adapters were reattached. The current launcher and scan profile deliberately address Panda only. Techkey is not configured or captured automatically.
+
+If a separately approved Techkey test establishes reception on the intended second-radio channel, a future dual-radio receiver could dedicate Panda to channel 6 and Techkey to 149. That would avoid single-radio hopping gaps on those two channels, but needs multi-input decoding, track/alert deduplication and coordinated STOP/restoration before use. It is not implemented by the scan option.
+
+The 6/149 plan is receiver coverage, not evidence that the Mavic broadcasts on both channels. Our Mavic captures establish channel-6 Remote ID reception only. DJI lists Wi-Fi Beacon as its Direct Remote ID transport in the [Mavic 4 Pro manual](https://dl.djicdn.com/downloads/mavic-4-pro/20250925/DJI_Mavic_4_Pro_User_Manual_v1.2_en.pdf); this is not a promise of simultaneous 6/149 broadcasts. A simultaneous comparison should preserve a working channel-6 reference and record any channel-149 result as an observation for that test interval.
 
 ## Resumed checkpoint — October 5, 2026
 
@@ -10,7 +49,7 @@ Panda `wlx9cefd5f67d4c` uses `mt76x0u` and currently advertises monitor support.
 
 The inspected capability report enables 2.4 GHz channels 1–11, with 12–14 disabled. Channels 6/2437 MHz and 149/5745 MHz are enabled without radar/no-IR flags. The adapter supports one channel at a time. Advertised capability is not a successful live retune or Remote ID reception test on channel 149.
 
-## First proposed implementation
+## Original implementation plan
 
 - Preserve tested fixed-channel-6 mode as the default and provide an explicit optional 6/149 scan profile.
 - Validate each planned channel against the current adapter capabilities. Do not change regulatory settings or include disabled channels.
@@ -30,4 +69,4 @@ Before a live test, explain that Panda will leave its Wi-Fi connection and alter
 - [Official DroneCOT feeds](https://github.com/snstac/dronecot/blob/main/docs/feeds.md): beacon/NAN Wi-Fi inputs and the optional 6/149 example.
 - [Linux Wireless iw documentation](https://wireless.docs.kernel.org/en/latest/en/users/documentation/iw.html): capability inspection and monitor/radiotap metadata.
 
-Sources and hardware capabilities inspected October 5, 2026. No radio, production server, firewall or router changes were made.
+Original sources and hardware capabilities inspected October 5, 2026; DroneCOT configuration and current USB/PHY capabilities rechecked October 18. Development inspections were read-only; the user subsequently ran the explicitly approved bounded Techkey tests documented above. No production server, firewall, router or driver changes were made.

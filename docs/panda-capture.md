@@ -1,5 +1,7 @@
 # Bounded Panda capture
 
+Fixed channel 6 remains the default. The optional, not yet hardware-tested `--live-scan` launcher is documented in [channel coverage](channel-coverage.md); it requires separate approval for repeated Panda retuning. Techkey is not used by either launcher mode.
+
 The user approved disconnecting only Panda and switching it to monitor mode. The first completed test recording decoded 185 reports; afterward Panda was observed connected in managed mode and Intel retained the default route. Internal Intel `wlp3s0` is the uplink; the inspected Panda is `wlx9cefd5f67d4c`, driver `mt76x0u`. Recheck hardware and connectivity before each test.
 
 When the authorized aircraft is broadcasting, run from the repository in your own terminal:
