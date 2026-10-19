@@ -30,3 +30,15 @@ Keep completed records and raw captures in ignored `local-data/`; share only san
 - [ ] Complete the [laptop reliability session](laptop-reliability.md): record aggregate health/resources during a two-hour run, verify bounded runtime logs, then record USB recovery, TAK stale/reconnect and outside-network TLS outcomes separately. Keep positive channel-149/BLE RID and two-aircraft tests distinct from process health.
 
 - [x] October 19 laptop endurance: user reported 188 minutes; 120-minute recording had 717 available health samples, stable renewal/transport and bounded logs. Final matching stopped session: 94 segments per source, 279 renewals, 1,003 decoded reports, zero decode errors. One transient degraded renewal observation remains an inferred monitoring transition. Nine channel-149 RF frames observed; channel-149/BLE RID and USB replug validation remain pending.
+
+- [x] October 19 Panda physical recovery: unplug while running left two healthy feeds active; reconnect restored monitor/channel 6 and packet reception in the same session. Second unplug followed by STOP/reconnect left every capture stopped and counters frozen. No RID decoded during this bench check; Techkey recovery and launcher restoration remain pending.
+
+- [x] October 19 launcher exit restoration after Panda test: both USB adapters managed/NetworkManager-connected, Intel preferred, Bluetooth powered/discovery released and dashboard closed. Techkey physical recovery remains pending.
+
+- [x] October 19 Techkey physical recovery/STOP cancellation: unplug left Panda/BLE/TAK active, reconnect restored monitor/channel 149 and running capture in the same session, and STOP before a second reconnect left all captures stopped with counters/retries frozen. No RID decoded; final Techkey-run launcher restoration pending.
+
+- [x] October 19 final Techkey-run restoration: Panda/Techkey managed and NetworkManager-connected, Intel preferred, Bluetooth powered with discovery released, dashboard closed. Both full adapter recovery/control/restoration bench cycles are complete; RID reception through interruption and remaining TAK/coverage checks remain separate.
+
+- [x] October 19 TAK Aware stale handling after STOP: operator reported both aircraft/operator markers faded after the instructed 60-second wait. Read-only checks confirmed all captures exited, TAK idle, counts/writes frozen and position ages increasing (~65 seconds). Exact fade threshold and deletion policy were not measured.
+
+- [x] October 19 explicit STOP→START TAK reconnect: operator confirmed faded aircraft/operator markers became active without duplicates. Read-only checks showed fresh reports, no decode/TAK errors, second TLS connection, and matching current/prior saved track keys. Unexpected network-loss field recovery and outside-network TLS remain separate.
