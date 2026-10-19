@@ -10,6 +10,16 @@ Scout now forwards its existing shared live tracks through DroneCOT CoT conversi
 
 The dedicated DRONECOT certificate and private-CA TLS check were confirmed PASS by the user on October 19, 2026. Aircraft/operator positions have independent 30-second expiry, shared stable track IDs and bounded reconnects. The user subsequently confirmed a live end-to-end test: Scout detected the aircraft and reported operator, and both appeared on the TAK Aware map. Client stale behavior, field reconnects and reception attribution across feeds remain unverified. See [private setup, exact commands and controlled TAK test](docs/tak-forwarding.md) and [sanitized output config](config/scout-tak.example.ini).
 
+## Laptop reliability work
+
+Laptop development remains the priority. Scout now has an input-health summary, worker/process health and resource metrics, capped private runtime logs, and a read-only aggregate endurance recorder. Existing field artifacts remain untouched. See [restart commands, two-hour observation and remaining USB/TAK/coverage checks](docs/laptop-reliability.md). A user-reported 188-minute run is now corroborated by a two-hour recording and final stopped-session counters: 279 renewals, 1,003 decoded reports and zero decode errors. Techkey also received nine RF frames on channel 149, without RID decoding. Physical USB recovery and remaining TAK/coverage checks stay pending; Raspberry Pi deployment is deferred.
+
+## USB recovery and unattended startup
+
+Opt-in `bash scripts/capture_dual.sh --live-tak --recover` restores the same pinned Panda/Techkey after confirmed physical USB reconnect, with fixed channels 6/149. Healthy feeds continue while the dashboard shows degraded coverage; shared tracks/session/history/alerts are preserved. STOP cancels recovery. Add `--autostart` to start detection once at process launch without a browser click. Ordinary modes remain unchanged; replay/simulation cannot recover radios or autostart live detection.
+
+See [commands, recovery safeguards, physical test and Raspberry Pi prerequisites](docs/usb-recovery.md). This is checked offline; actual unplug/replug testing is pending. A Pi-specific profile and boot-time privilege/service setup remain separate work; no system permissions or services were changed.
+
 ## Combined detector
 
 One START/STOP now controls **Panda on Wi-Fi 6, Techkey on Wi-Fi 149 and legacy Bluetooth hci0**, with shared tracks, receiver provenance, details, alerts and private history. Per-source rows distinguish Wi-Fi packets, BLE service-data updates and actual RID candidates. Matching claimed Basic IDs and ID types are correlated; ambiguous/conflicting observations remain reviewable. Source failure stops the group visibly. This mode is checked offline; a three-source hardware dashboard test is still pending.

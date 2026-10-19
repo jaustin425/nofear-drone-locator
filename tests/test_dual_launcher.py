@@ -205,6 +205,20 @@ class DualLauncherTests(unittest.TestCase):
         self.assertLess(trace.index('app-stop'),trace.index('set type managed'))
         self.assert_restored()
 
+    def test_explicit_recovery_and_autostart_flags_reach_combined_app(self):
+        result=subprocess.run(['bash',str(self.root/'scripts/capture_dual.sh'),'--live-tak','--recover','--autostart'],env=self.env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        trace=(self.root/'trace').read_text()
+        self.assertIn('--recover-radios --autostart',trace)
+        self.assertLess(trace.index('app-stop'),trace.index('set type managed'))
+        self.assert_restored()
+
+    def test_autostart_without_recovery_is_rejected_before_network_changes(self):
+        result=subprocess.run(['bash',str(self.root/'scripts/capture_dual.sh'),'--live','--autostart'],env=self.env,capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('Autostart requires --recover',result.stderr)
+        self.assertFalse((self.root/'trace').exists())
+
     def test_live_signal_waits_for_app_before_restoring_both_radios(self):
         process=subprocess.Popen(['bash',str(self.root/'scripts/capture_dual.sh'),'--live'],env={**self.env,'APP_HOLD':'1'},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
         try:

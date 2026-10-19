@@ -24,3 +24,9 @@ Keep completed records and raw captures in ignored `local-data/`; share only san
 
 - [x] User confirmed live Scout detection and display of both aircraft and reported operator/controller markers on the TAK Aware map.
 - [ ] Still verify client stale handling after STOP, field reconnects, coordinate/timestamp comparison, multi-aircraft separation and launcher restoration. This milestone does not establish channel-149/BLE reception or verified personal identity. Exact test time and per-source attribution were not provided.
+
+- [ ] With separately selected [USB recovery](usb-recovery.md), verify same-device reconnect restores its fixed channel without session/track/alert reset, healthy sources continue, STOP cancels pending/in-flight recovery, and launcher restoration completes. Autostart occurs only for an explicitly configured new process, never browser refresh. Physical validation pending.
+
+- [ ] Complete the [laptop reliability session](laptop-reliability.md): record aggregate health/resources during a two-hour run, verify bounded runtime logs, then record USB recovery, TAK stale/reconnect and outside-network TLS outcomes separately. Keep positive channel-149/BLE RID and two-aircraft tests distinct from process health.
+
+- [x] October 19 laptop endurance: user reported 188 minutes; 120-minute recording had 717 available health samples, stable renewal/transport and bounded logs. Final matching stopped session: 94 segments per source, 279 renewals, 1,003 decoded reports, zero decode errors. One transient degraded renewal observation remains an inferred monitoring transition. Nine channel-149 RF frames observed; channel-149/BLE RID and USB replug validation remain pending.

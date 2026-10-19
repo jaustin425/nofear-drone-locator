@@ -2,8 +2,21 @@
 # Bounded comparison or combined live detector; optional write-only TAK output.
 set -euo pipefail
 umask 077
-[[ $# -le 1 && ( ${1:-} == '' || ${1:-} == --live || ${1:-} == --live-tak ) && $EUID != 0 ]] || { echo 'Run as your normal user: bash scripts/capture_dual.sh [--live|--live-tak]' >&2; exit 1; }
+[[ $EUID != 0 && $# -le 3 ]] || { echo 'Run as normal user: bash scripts/capture_dual.sh [--live|--live-tak] [--recover] [--autostart]' >&2; exit 1; }
 launch_mode=${1:-bounded}
+if (( $# )); then shift; fi
+case "$launch_mode" in bounded|--live|--live-tak) ;; *) echo 'Unknown capture mode; nothing changed.' >&2; exit 1 ;; esac
+recovery_selected=0
+autostart_selected=0
+for option in "$@"; do
+    case "$option" in
+        --recover) recovery_selected=1 ;;
+        --autostart) autostart_selected=1 ;;
+        *) echo 'Unknown option; nothing changed.' >&2; exit 1 ;;
+    esac
+done
+[[ "$launch_mode" != bounded || $# == 0 ]] || { echo 'Recovery/autostart requires a live mode; nothing changed.' >&2; exit 1; }
+[[ "$autostart_selected" == 0 || "$recovery_selected" == 1 ]] || { echo 'Autostart requires --recover; nothing changed.' >&2; exit 1; }
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$project_root"
 radios=(wlx9cefd5f67d4c wlx1cbfce038535)
@@ -194,6 +207,14 @@ if [[ "$launch_mode" == --live || "$launch_mode" == --live-tak ]]; then
         echo 'Optional verified write-only TAK TLS enabled; output errors leave local detection running.'
     else
         echo 'TAK stays disabled.'
+    fi
+    if [[ "$recovery_selected" == 1 ]]; then
+        tak_args+=(--recover-radios)
+        echo 'USB recovery authorized: only the same pinned adapters may be re-prepared on fixed 6/149 after physical reconnect; Intel stays unchanged.'
+    fi
+    if [[ "$autostart_selected" == 1 ]]; then
+        tak_args+=(--autostart)
+        echo 'Unattended startup selected: detection starts once at launch. STOP cancels until explicit START or process restart.'
     fi
     keep_sudo_alive & auth_pid=$!
     "$project_root/.venv/bin/python" -m aetherlink_scout --combined "${tak_args[@]}" & app_pid=$!

@@ -72,3 +72,5 @@ Before a live test, explain that Panda will leave its Wi-Fi connection and alter
 - [Linux Wireless iw documentation](https://wireless.docs.kernel.org/en/latest/en/users/documentation/iw.html): capability inspection and monitor/radiotap metadata.
 
 Original sources and hardware capabilities inspected October 5, 2026; DroneCOT configuration and current USB/PHY capabilities rechecked October 18. Development inspections were read-only; the user subsequently ran the explicitly approved bounded Techkey tests documented above. No production server, firewall, router or driver changes were made.
+
+Later endurance evidence (October 19, 2026): the matching stopped session recorded nine Techkey frames at 5745 MHz/channel 149 and zero channel-149 RID decodes. This establishes RF reception for that run, updating the earlier no-packet/unverified-RF result; it does not establish reception of a Remote ID transmitter on 149. See [the endurance review](laptop-reliability.md#observed-endurance-result--october-19-2026).

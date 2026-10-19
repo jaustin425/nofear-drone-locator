@@ -426,6 +426,8 @@ function renderReceiver() {
   $('receiver-status').dataset.state=replay.connected?status.state:'error';
   const age=status.last_report_age===null?'No Remote ID reports yet':`${Math.floor(replay.age({lastSeen:replay.serverTime-status.last_report_age}))}s since last Remote ID report`;
   $('receiver-status').textContent=replay.connected?`${status.message} · ${age}`:'Dashboard connection lost · receiver state unknown; positions continue aging';
+  $('health-summary').textContent=status.health?.message || 'Receiver health unavailable';
+  $('health-summary').dataset.state=status.health?.state || 'unknown';
   const tak=status.tak_output;
   $('tak-status').textContent=tak?`${tak.mode==='local'?'LOCAL CoT':'TAK TLS'}: ${tak.message} · ${tak.sent} writes · ${tak.errors} errors`:'TAK output disabled';
   $('mode-description').textContent=simulation?'Recorded observations · no radio capture · TAK disabled':`${status.combined_enabled?'Wi-Fi 6 + Wi-Fi 149 + legacy BLE':'Explicit START/STOP capture'} · ${tak?(tak.mode==='local'?'LOCAL CoT only':'Optional TAK TLS enabled'):'TAK disabled'}`;
@@ -446,7 +448,7 @@ function renderReceiver() {
   for (const source of status.sources || []) {
     const input=source.ble_enabled?`${source.ble_service_updates} BLE service updates · ${source.counts.packets} RID candidates · legacy only`:
       `channel ${source.expected_channel} · ${source.counts.packets} packets · ${source.last_frequency_mhz?`last packet ${source.last_frequency_mhz} MHz`:'packet frequency unverified'}`;
-    $('source-status').append(node('p',`${source.label}: ${source.state} · ${input} · ${source.counts.decoded} decoded · ${source.counts.errors} decode errors · ${Math.max(0,source.capture_segments-1)} renewals`));
+    $('source-status').append(node('p',`${source.label}: ${source.state} · ${input} · ${source.counts.decoded} decoded · ${source.counts.errors} decode errors · ${Math.max(0,source.capture_segments-1-(source.capture_recoveries||0))} renewals${source.recovery_enabled?` · ${source.capture_recoveries} USB recoveries · ${source.recovery_attempts} attempts · ${source.message}`:''}`));
   }
   if (status.history_error) $('history-status').textContent='History could not be saved; live detection continues. Map clearing is blocked until saving works.';
   if (sound && audio?.state!=='running') $('audio-status').textContent='Browser audio suspended · click Sound on to re-arm';
@@ -522,7 +524,7 @@ function renderAlerts() {
 }
 
 function beep() {
-  if (!sound || !audio || audio.state !== 'running' || streaming && !['running','waiting','renewing'].includes(replay.status?.state)) return;
+  if (!sound || !audio || audio.state !== 'running' || streaming && !['running','waiting','renewing','recovering'].includes(replay.status?.state)) return;
   detectionTone.play(audio);
 }
 

@@ -64,3 +64,5 @@ The full Python suite passed 82 tests, including concurrent synthetic input proc
 Hardware results for this combined mode are pending. Development changed no radio state. Never commit raw captures, logs, local locations, certificates or credentials. Do not commit/push this feature without a new explicit checkpoint authorization.
 
 For approved server forwarding, use the optional [TAK output procedure](tak-forwarding.md); capture setup is identical, and historical replay/simulation cannot transmit.
+
+Optional terminal-selected [USB recovery/autostart](usb-recovery.md) is now available. With `--recover`, confirmed physical USB absence/replacement generation waits visibly while healthy feeds continue; other source errors retain the group-stop policy. Default modes remain unchanged.

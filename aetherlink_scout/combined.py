@@ -12,6 +12,7 @@ import time
 from .ble import BleReceiver
 from .capture import LiveCapture, CaptureError, CAPTURE_SEGMENT_SECONDS
 from .receiver import Receiver, MAX_TRACKS
+from .health import receiver_health
 
 
 @dataclass
@@ -21,20 +22,29 @@ class Source:
     receiver: Receiver
 
 
-def default_sources():
+def default_sources(recover_radios=False):
     def panda(interface):
         return LiveCapture(interface, driver='mt76x0u')
     def techkey(interface):
         return LiveCapture(interface, channel=149, frequency=5745, driver='rtl88x2bu')
-    return [Source('wifi6', 'Panda · Wi-Fi 6', Receiver(live_interface='wlx9cefd5f67d4c', capture_factory=panda)),
+    sources = [Source('wifi6', 'Panda · Wi-Fi 6', Receiver(live_interface='wlx9cefd5f67d4c', capture_factory=panda)),
             Source('wifi149', 'Techkey · Wi-Fi 149', Receiver(live_interface='wlx1cbfce038535', capture_factory=techkey, channel=149, frequency=5745)),
             Source('ble', 'Bluetooth · legacy BLE', BleReceiver())]
+    if recover_radios:
+        from .recovery import RadioRecovery
+        for source,address,driver,channel,frequency in (
+            (sources[0],'9c:ef:d5:f6:7d:4c','mt76x0u',6,2437),
+            (sources[1],'1c:bf:ce:03:85:35','rtl88x2bu',149,5745)):
+            recovery=RadioRecovery(source.receiver.live_interface,address,driver,channel,frequency)
+            source.receiver.recovery=recovery
+            source.receiver.capture_factory=recovery.capture
+    return sources
 
 
 class CombinedReceiver(Receiver):
-    def __init__(self, *, sources=None, **kwargs):
+    def __init__(self, *, sources=None, recover_radios=False, **kwargs):
         super().__init__(**kwargs)
-        self.sources = list(default_sources() if sources is None else sources)
+        self.sources = list(default_sources(recover_radios) if sources is None else sources)
         if not self.sources or len({s.id for s in self.sources}) != len(self.sources):
             raise ValueError('Combined detector requires distinct sources.')
         self.worker_daemon = False  # launcher cannot restore while cleanup is pending
@@ -75,10 +85,13 @@ class CombinedReceiver(Receiver):
             value = super().status()
             value.update(combined_enabled=True, continuous_capture=True, capture_managed_by_app=True,
                          capture_segment_seconds=CAPTURE_SEGMENT_SECONDS,
-                         capture_renewals=sum(max(0, status['capture_segments']-1) for _, status in children),
+                         capture_renewals=sum(max(0, status['capture_segments']-1-status['capture_recoveries']) for _, status in children),
+                         radio_recovery_enabled=any(s.receiver.recovery for s in self.sources),
+                         capture_recoveries=sum(status['capture_recoveries'] for _,status in children),
                          expected_channel=None, expected_frequency_mhz=None,
                          merge_aliases=dict(self.merge_aliases),
                          sources=[{**status, 'id': source.id, 'label': source.label} for source, status in children])
+            value['health']=receiver_health(value)
             return value
 
     def start_detection(self):
@@ -94,6 +107,7 @@ class CombinedReceiver(Receiver):
                     source.receiver.counts = dict(packets=0, decoded=0, errors=0, rejected=0, unidentified=0)
                     source.receiver.last_packet = source.receiver.last_report = None
                     source.receiver.capture_segments = 0
+                    source.receiver.capture_recoveries = source.receiver.recovery_attempts = 0
                     if hasattr(source.receiver, 'service_updates'):
                         source.receiver.service_updates = source.receiver.rid_candidates = 0
             return super().start_detection()
@@ -126,12 +140,15 @@ class CombinedReceiver(Receiver):
                 except CaptureError as error:
                     raise CaptureError(f'{source.label}: {error} · all sources are stopping') from None
             while not self.stop.wait(.1):
+                self.heartbeat()
                 statuses = [(s, s.receiver.status()) for s in self.sources]
                 for source, status in statuses:
                     if status['state'] == 'error' or not status['detection_active']:
                         raise CaptureError(f'{source.label}: {status["message"]} · all sources are stopping')
                 states = [status['state'] for _, status in statuses]
-                if 'renewing' in states:
+                if 'recovering' in states:
+                    self.set_state('recovering', 'Detection degraded · waiting for a dedicated USB radio; healthy feeds continue')
+                elif 'renewing' in states:
                     self.set_state('renewing', 'Combined detection active · a bounded source is renewing')
                 elif all(state == 'running' for state in states):
                     self.set_state('running', 'Combined detection running · Wi-Fi 6, Wi-Fi 149 and legacy BLE')

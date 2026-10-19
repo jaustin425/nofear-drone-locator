@@ -19,6 +19,7 @@ from .replay import report
 from .capture import CaptureError, LiveCapture, ScanCapture, SCAN_PLAN, EXPECTED_CHANNEL, EXPECTED_FREQUENCY, CAPTURE_SEGMENT_SECONDS
 from .history import HistoryStore
 from .decode_lock import DECODE_LOCK
+from .health import receiver_health
 
 MAX_TRACKS = 512
 MAX_EVENTS = 2048
@@ -39,14 +40,17 @@ class PcapStream:
     PCAPNG remains supported by ordinary replay/simulation. Live tcpdump uses
     classic PCAP. An idle pipe is polled so shutdown never waits for a packet.
     """
-    def __init__(self, fd, stop):
+    def __init__(self, fd, stop, health_check=None):
         self.fd, self.stop = fd, stop
+        self.health_check = health_check
 
     def read(self, count, eof_ok=False):
         data = bytearray()
         while len(data) < count:
             if self.stop.is_set():
                 raise InputStopped()
+            if self.health_check:
+                self.health_check()
             ready, _, _ = select.select([self.fd], [], [], .1)
             if not ready:
                 continue
@@ -88,11 +92,13 @@ class PcapStream:
 
 
 class Receiver:
-    def __init__(self, *, simulation=None, speed=1, input_fd=None, live_interface=None, stale_seconds=30, clock=time.monotonic, capture_factory=LiveCapture, history=None, scan=False, channel=EXPECTED_CHANNEL, frequency=EXPECTED_FREQUENCY):
+    def __init__(self, *, simulation=None, speed=1, input_fd=None, live_interface=None, stale_seconds=30, clock=time.monotonic, capture_factory=LiveCapture, history=None, scan=False, channel=EXPECTED_CHANNEL, frequency=EXPECTED_FREQUENCY, recovery=None):
         if scan and (not live_interface or simulation is not None):
             raise ValueError('Scanning requires explicit live-interface mode.')
         self.mode = 'stream_simulation' if simulation is not None else 'live_stream'
         self.simulation, self.speed, self.input_fd = simulation, speed, input_fd
+        self.recovery = recovery
+        self.capture_recoveries = self.recovery_attempts = 0
         self.scan = scan
         self.expected_channel, self.expected_frequency = channel, frequency
         self.worker_daemon = True
@@ -126,9 +132,15 @@ class Receiver:
         self.history_error = False
         self.tak_output = None
         self.map_revision = 0
+        self.worker_heartbeat = None
 
     def elapsed(self):
         return max(0, self.clock()-self.start)
+
+    def heartbeat(self):
+        self.worker_heartbeat = self.clock()
+        if self.recovery:
+            self.recovery.check_capture(self.capture)
 
     def set_state(self, state, message):
         with self.lock:
@@ -137,8 +149,12 @@ class Receiver:
     def status(self):
         with self.lock:
             now = self.elapsed()
-            return {'mode': self.mode, 'session_id': self.session_id, 'state': self.state,
-                    'message': self.message, 'elapsed': now, 'counts': dict(self.counts),
+            process = getattr(self.capture, 'process', None)
+            process_alive = process.poll() is None if process is not None else None
+            value = {'mode': self.mode, 'session_id': self.session_id, 'state': self.state,
+                    'message': self.message, 'elapsed': now,
+                    'worker_heartbeat_age': None if self.worker_heartbeat is None else max(0,self.clock()-self.worker_heartbeat),
+                    'capture_process_alive': process_alive, 'stop_unconfirmed': self.stop_unconfirmed, 'counts': dict(self.counts),
                     'last_packet_age': None if self.last_packet is None else max(0, now-self.last_packet),
                     'last_report_age': None if self.last_report is None else max(0, now-self.last_report),
                     'retained_tracks': len(self.tracks), 'evicted_tracks': self.evicted_tracks,
@@ -148,6 +164,8 @@ class Receiver:
                     'continuous_capture': bool(self.live_interface),
                     'capture_segment_seconds': CAPTURE_SEGMENT_SECONDS if self.live_interface else None,
                     'capture_segments': self.capture_segments,
+                    'recovery_enabled': self.recovery is not None,
+                    'capture_recoveries': self.capture_recoveries, 'recovery_attempts': self.recovery_attempts,
                     'map_revision': self.map_revision,
                     'history_error': self.history_error,
                     'scan_enabled': self.scan,
@@ -157,6 +175,8 @@ class Receiver:
                     'expected_frequency_mhz': self.expected_frequency if self.live_interface and not self.scan else None,
                     'received_frequencies_mhz': sorted(self.frequencies),
                     'last_frequency_mhz': self.last_frequency}
+            value['health']=receiver_health(value)
+            return value
 
     def _radio_status(self):
         verified = getattr(self.capture, 'verified', None)
@@ -294,8 +314,10 @@ class Receiver:
                 self.frequencies.clear()
                 self.last_frequency = None
                 self.capture_segments = 1 if self.live_interface else 0
+                self.capture_recoveries = self.recovery_attempts = 0
                 self.history_saved.clear()
                 self.map_revision = 0
+                self.worker_heartbeat = None
                 self.state = 'waiting'
                 self.message = 'Starting timed recording simulation' if self.simulation is not None else 'Starting capture · waiting for input'
             self.thread = threading.Thread(target=self._run, name='scout-input', daemon=self.worker_daemon)
@@ -360,31 +382,69 @@ class Receiver:
                     self.stop_unconfirmed = True
                     self.set_state('error', str(error))
 
+    def _recover_radio(self):
+        from .recovery import RadioAbsent, RecoveryCancelled
+        # Confirm the old capture is gone before touching its returned interface.
+        with self.capture_control:
+            self.capture.stop()
+        delay=1
+        while not self.stop.is_set():
+            self.set_state('recovering',f'USB radio disconnected · retry in {delay}s · other feeds continue')
+            if self.stop.wait(delay):raise InputStopped()
+            try:
+                with self.capture_control:
+                    if self.stop.is_set():raise InputStopped()
+                    with self.lock:self.recovery_attempts+=1
+                    self.recovery.prepare(self.stop)
+                    if self.stop.is_set():raise InputStopped()
+                    replacement=self.capture_factory(self.live_interface)
+                    try:
+                        fd=replacement.start()
+                    except Exception:
+                        replacement.stop()
+                        raise
+                    self.capture,self.input_fd=replacement,fd
+                    with self.lock:
+                        self.capture_segments+=1
+                        self.capture_recoveries+=1
+                self.set_state('waiting','USB radio recovered · listening on its assigned channel')
+                return
+            except RadioAbsent:
+                # Only confirmed physical absence/new generation is recoverable.
+                delay=min(15,delay*2)
+            except RecoveryCancelled:
+                raise InputStopped() from None
+        raise InputStopped()
+
     def _live(self):
         while not self.stop.is_set():
-            self._read_pcap()
-            with self.capture_control:
-                if self.stop.is_set():
-                    raise InputStopped()
-                outcome = self.capture.outcome()
-                self.capture.stop()
-            if self.stop.is_set():
-                raise InputStopped()
-            # Only timeout's confirmed duration expiry is renewable. Clean but
-            # unexpected EOF, radio loss and failures require operator attention.
-            if outcome != 124:
-                raise CaptureError('Capture ended unexpectedly; detection stopped. Check the receiver and private capture log before START.')
-            self.set_state('renewing', 'Detection active · renewing capture')
-            if self.stop.wait(.25):
-                raise InputStopped()
-            with self.capture_control:
-                if self.stop.is_set():
-                    raise InputStopped()
-                self.capture = self.capture_factory(self.live_interface)
-                self.input_fd = self.capture.start()
-                with self.lock:
-                    self.capture_segments += 1
-            # Session ID, tracks, field ages, events and counts stay intact.
+            try:
+                self._read_pcap()
+                with self.capture_control:
+                    if self.stop.is_set():raise InputStopped()
+                    outcome=self.capture.outcome()
+                    self.capture.stop()
+                if self.stop.is_set():raise InputStopped()
+                if outcome!=124:
+                    raise CaptureError('Capture ended unexpectedly; detection stopped. Check the receiver and private capture log before START.')
+                self.set_state('renewing','Detection active · renewing capture')
+                if self.stop.wait(.25):raise InputStopped()
+                with self.capture_control:
+                    if self.stop.is_set():raise InputStopped()
+                    replacement=self.capture_factory(self.live_interface)
+                    try:
+                        fd=replacement.start()
+                    except Exception:
+                        replacement.stop()
+                        raise
+                    self.capture,self.input_fd=replacement,fd
+                    with self.lock:self.capture_segments+=1
+            except (CaptureError,ValueError,OSError):
+                if self.stop.is_set():raise InputStopped() from None
+                if self.recovery and self.recovery.disconnected(self.capture):
+                    self._recover_radio()
+                    continue
+                raise
         raise InputStopped()
 
     def _simulate(self):
@@ -403,7 +463,7 @@ class Receiver:
         self.set_state('stopped', 'Simulation complete · retained positions continue aging')
 
     def _read_pcap(self):
-        stream = PcapStream(self.input_fd, self.stop)
+        stream = PcapStream(self.input_fd, self.stop, self.heartbeat)
         stream.header()
         self.set_state('running', 'Receiver running · listening for Remote ID')
         while not self.stop.is_set():

@@ -12,6 +12,7 @@ from .geocoding import AddressLookup, GeoapifyLookup
 from .receiver import event
 from .capture import CaptureError
 from .history import HistoryStore
+from .health import RuntimeHealth, receiver_health
 from starlette.concurrency import run_in_threadpool
 
 STATIC = Path(__file__).parent / "static"
@@ -26,9 +27,12 @@ class ClearMapRequest(BaseModel):
     only_stale: Literal[True] = True
 
 
-def create_app(replay=None, host="127.0.0.2", geocoder_url=None, geoapify_key=None, *, receiver=None):
+def create_app(replay=None, host="127.0.0.2", geocoder_url=None, geoapify_key=None, *, receiver=None, autostart=False):
     if (replay is None) == (receiver is None):
         raise ValueError('Choose replay or receiver')
+
+    if autostart and (not receiver or receiver.mode!='live_stream' or not getattr(receiver,'sources',None) or not any(source.receiver.recovery for source in receiver.sources)):
+        raise ValueError('Autostart requires explicitly selected combined radio recovery.')
 
     @asynccontextmanager
     async def lifespan(app):
@@ -37,6 +41,8 @@ def create_app(replay=None, host="127.0.0.2", geocoder_url=None, geoapify_key=No
             if receiver.tak_output:
                 receiver.tak_output.begin()
         try:
+            if autostart:
+                receiver.start_detection()
             yield
         finally:
             if receiver:
@@ -45,6 +51,7 @@ def create_app(replay=None, host="127.0.0.2", geocoder_url=None, geoapify_key=No
                     receiver.tak_output.close()
 
     app = FastAPI(title="AetherLink Scout", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app.state.runtime_health = RuntimeHealth()
     app.state.event_clients = 0
     app.state.history = receiver.history if receiver else HistoryStore()
     app.state.geocoder = GeoapifyLookup(geoapify_key) if geoapify_key else AddressLookup(geocoder_url)
@@ -76,6 +83,8 @@ def create_app(replay=None, host="127.0.0.2", geocoder_url=None, geoapify_key=No
         return {"mode": receiver.mode if receiver else replay["mode"], "tak_enabled": bool(status and status["tak_enabled"]),
                 "live_capture": bool(receiver and receiver.mode == 'live_stream' and status['state'] == 'running'),
                 "receiver": status,
+                "operational": status["health"] if status else receiver_health(replay),
+                "runtime": app.state.runtime_health.snapshot(),
                 "address_lookup_enabled": bool(app.state.geocoder.endpoint),
                 "address_provider": app.state.geocoder.provider if app.state.geocoder.endpoint else None}
 

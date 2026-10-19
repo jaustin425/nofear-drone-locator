@@ -1,6 +1,6 @@
 # AetherLink Scout → TAK Server
 
-Optional output from the existing shared live-track store, using DroneCOT's aircraft/operator converters and PyTAK 7.6.1's TLS transport. This adds no receiver and changes no interface, channel or Bluetooth behavior. Panda stays on 6, Techkey on 149 and legacy BLE on hci0. TAK output failure never stops local detection. Channel-149 positive reception and positive BLE RID decoding remain unverified.
+Optional output from the existing shared live-track store, using DroneCOT's aircraft/operator converters and PyTAK 7.6.1's TLS transport. This adds no receiver and changes no interface, channel or Bluetooth behavior. Panda stays on 6, Techkey on 149 and legacy BLE on hci0. TAK output failure never stops local detection. A later endurance run observed nine RF frames on channel 149; positive channel-149 RID and BLE RID decoding remain unverified.
 
 ## Local setup and first check
 

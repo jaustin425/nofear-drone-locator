@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 
 from dronecot.ble_parse import parse_odid_service_data
 from dronecot.rid_normalize import bytes_to_rid_dict
@@ -15,6 +14,8 @@ from .capture import LiveCapture, CaptureError, CAPTURE_SEGMENT_SECONDS
 from .receiver import Receiver, PcapStream, InputStopped
 from .replay import report
 from .decode_lock import DECODE_LOCK
+
+from .runtime_logs import runtime_logs
 
 MAX_LINE = 16384
 
@@ -50,13 +51,15 @@ class BleCapture(LiveCapture):
         if os.geteuid() == 0:
             raise CaptureError('Run Scout as your normal user.')
         root = Path(__file__).resolve().parent.parent
-        folder = root/'local-data'
-        folder.mkdir(exist_ok=True)
-        self.log = tempfile.NamedTemporaryFile(prefix='scout-ble-', suffix='.log', dir=folder, delete=False)
+        try:
+            self.log = runtime_logs().open('ble')
+        except OSError:
+            raise CaptureError('Private Bluetooth runtime log unavailable; inspect local disk and runtime-log directory.') from None
         command = ['timeout', '--signal=INT', '--kill-after=3s', f'{CAPTURE_SEGMENT_SECONDS}s',
                    '/usr/bin/python3', '-u', str(root/'scripts/ble_bluez.py'), '--adapter', self.interface]
         try:
             self.process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=self.log)
+            self.log.started()
         except OSError:
             self.log.close()
             raise CaptureError('Unable to start the bounded Bluetooth reader.') from None
@@ -89,7 +92,7 @@ class BleReceiver(Receiver):
             if self.capture_segments == 1:
                 self.service_updates = self.rid_candidates = 0
             service_offset, candidate_offset = self.service_updates, self.rid_candidates
-        stream = PcapStream(self.input_fd, self.stop)
+        stream = PcapStream(self.input_fd, self.stop, self.heartbeat)
         while not self.stop.is_set():
             line = bytearray()
             while True:

@@ -25,6 +25,8 @@ def main():
     source.add_argument('--live-interface', metavar='INTERFACE', help='START/STOP on an already prepared monitor radio; fixed channel by default, --scan explicitly enables Panda retuning')
     source.add_argument('--live-bluetooth', metavar='HCI', help='START/STOP legacy BLE discovery on an already powered BlueZ adapter, e.g. hci0; no Wi-Fi changes')
     source.add_argument('--combined', action='store_true', help='One START/STOP: prepared Panda channel 6, Techkey channel 149 and powered hci0; shared tracks/history/alerts')
+    parser.add_argument('--recover-radios',action='store_true',help='Terminal-approved combined mode: recover only pinned USB radios after physical reconnect; restore fixed 6/149 profiles')
+    parser.add_argument('--autostart',action='store_true',help='Explicit unattended combined/recovery startup; starts detection once at process launch, never on browser refresh')
     parser.add_argument('--scan', action='store_true', help='Explicit live Panda scan: START retunes channels 6/149 with 3/1-second dwell; requires terminal authorization')
     parser.add_argument('--simulation-speed', type=float, default=1, help='Simulation pacing only: 1–20 (default 1)')
     parser.add_argument("--port", type=int, default=8765)
@@ -38,6 +40,10 @@ def main():
     args = parser.parse_args()
     if (args.tak_config or args.cot_local_output) and not (args.combined or args.live_interface or args.live_bluetooth):
         parser.error('CoT output requires live input; replay/simulation never transmits.')
+    if args.recover_radios and not args.combined:
+        parser.error('--recover-radios requires --combined; no replay or scan-mode recovery.')
+    if args.autostart and not (args.combined and args.recover_radios):
+        parser.error('--autostart requires explicit --combined --recover-radios.')
     tak_config = None
     if args.tak_config:
         try:
@@ -72,7 +78,7 @@ def main():
     replay = receiver = None
     if args.live_interface or args.live_bluetooth or args.combined:
         history = HistoryStore(Path(__file__).resolve().parent.parent/'local-data/scout-history.sqlite3')
-        receiver = CombinedReceiver(history=history) if args.combined else BleReceiver(adapter=args.live_bluetooth, history=history) if args.live_bluetooth else Receiver(live_interface=args.live_interface, history=history, scan=args.scan)
+        receiver = CombinedReceiver(history=history,recover_radios=args.recover_radios) if args.combined else BleReceiver(adapter=args.live_bluetooth, history=history) if args.live_bluetooth else Receiver(live_interface=args.live_interface, history=history, scan=args.scan)
     else:
         try:
             replay = demo_dataset() if args.demo or args.simulate_demo else load_capture(args.simulate or args.capture)
@@ -103,9 +109,13 @@ def main():
         print('START discovers legacy BLE on the already powered adapter until STOP; bounded 120s sessions renew only on confirmed expiry. BlueZ D-Bus may coalesce updates; Bluetooth 5 Coded PHY is not covered. Wi-Fi stays unchanged.', flush=True)
     else:
         print('Prepare monitor radio separately; START listens until STOP using renewable bounded capture segments.' if args.live_interface else 'No radio capture or TAK output.', flush=True)
+    if args.recover_radios:
+        print('USB RECOVERY SELECTED: returning pinned radios may be disconnected from NetworkManager and restored to fixed 6/149; Intel remains uplink. STOP cancels retries.',flush=True)
+    if args.autostart:
+        print('AUTOSTART SELECTED: detection starts once with this process. Browser sound remains opt-in; STOP persists until explicit START or process restart.',flush=True)
     if args.scan:
         print('SCAN SELECTED: START retunes only prepared Panda between channels 6 (3s) and 149 (1s). STOP cancels retuning; Intel remains the uplink.', flush=True)
-    uvicorn.run(create_app(replay, str(host), args.geocoder_url, api_key, receiver=receiver), host=str(host), port=args.port, access_log=False, timeout_graceful_shutdown=2)
+    uvicorn.run(create_app(replay, str(host), args.geocoder_url, api_key, receiver=receiver,autostart=args.autostart), host=str(host), port=args.port, access_log=False, timeout_graceful_shutdown=2)
 
 
 if __name__ == "__main__":

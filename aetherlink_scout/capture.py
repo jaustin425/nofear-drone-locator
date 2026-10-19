@@ -5,9 +5,10 @@ import pwd
 import re
 import signal
 import subprocess
-import tempfile
 import threading
 import time
+
+from .runtime_logs import runtime_logs
 
 FILTER = '(wlan[0] & 0xfc = 0x80) or (wlan[0] & 0xfc = 0xd0)'
 EXPECTED_CHANNEL = 6
@@ -56,9 +57,10 @@ class LiveCapture:
         except (OSError, subprocess.SubprocessError):
             raise CaptureError('Capture prerequisites unavailable. Run sudo -v privately in the launch terminal; no interface changes made.') from None
         self.prepare_capture()
-        folder = Path(__file__).resolve().parent.parent/'local-data'
-        folder.mkdir(exist_ok=True)
-        self.log = tempfile.NamedTemporaryFile(prefix='scout-capture-', suffix='.log', dir=folder, delete=False)
+        try:
+            self.log = runtime_logs().open('wifi')
+        except OSError:
+            raise CaptureError('Private runtime log unavailable; inspect local disk and runtime-log directory.') from None
         user = pwd.getpwuid(os.getuid()).pw_name
         # Sudo forwards SIGINT to its command. timeout is a second bound if an
         # explicit stop cannot complete. tcpdump drops capture privileges to user.
@@ -66,6 +68,7 @@ class LiveCapture:
                    'tcpdump', '-i', self.interface, '-nn', '-U', '-s', '0', '-w', '-', '-Z', user, FILTER]
         try:
             self.process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=self.log)
+            self.log.started()
         except OSError:
             self.log.close()
             raise CaptureError('Unable to start capture; see private terminal prerequisites.') from None
@@ -83,7 +86,10 @@ class LiveCapture:
         finally:
             if self.process.poll() is not None:
                 self.process.stdout.close()
-                self.log.close()
+                try:
+                    self.log.close()
+                except OSError:
+                    raise CaptureError('Capture stderr cleanup is unconfirmed; do not restore the radio yet.') from None
 
     def outcome(self):
         if self.process is None:
